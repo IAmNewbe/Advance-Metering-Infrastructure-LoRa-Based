@@ -59,12 +59,15 @@ unsigned long lastOn;
 int led = 2;
 int counter =0;
 
-float voltage, current, power, energy, frequency, pf;
+float voltage, current, power, energy, frequency, pf, rssi, freq;
 String chipID;
+char chipIDStr[20];
 
-#define MSG_BUFFER_SIZE  (500)
-char data[MSG_BUFFER_SIZE] = "{\"DevUI\":\"%.2f\",\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\",\"Power_PLN\":\"%.2f\",\"Energy_PLN\":\"%.2f\",\"Frekuensi_PLN\":\"%.2f\",\"Power_Faktor_PLN\":\"%.2f\"}";
-char data_buffer[500];
+const int MSG_BUFFER_SIZE = 600;
+char data[MSG_BUFFER_SIZE];
+const char* jsonData = "{\"devUI\":\"%s\",\"time_at_device\":\"%s\",\"RSSI\":%.1f,\"frequency\":%.1f,\"data\":{"
+                              "\"voltage\":%.2f,\"current\":%.2f,\"power\":%.2f,\"energy\":%.2f,"
+                              "\"frequency\":%.2f,\"power_factor\":%.2f}}";
 
 const char* ssid = "crustea";
 const char* password = "crustea1234";
@@ -141,12 +144,12 @@ void LoRaSetUp() {
 
 void LoRaSend() {
   Serial.println("Sending packet: ");
-  Serial.println(data_buffer);
+  Serial.println(data);
 
   //Send LoRa packet to receiver
   LoRa.beginPacket();
   // LoRa.print("data : ");
-  LoRa.print(data_buffer);
+  LoRa.print(data);
   LoRa.endPacket();
   counter++;
 
@@ -165,8 +168,14 @@ void ReadPzem() {
   chipID = WiFi.macAddress();
   Serial.print("Chip ID (MAC Address): ");
   Serial.println(chipID);
+  strcpy(chipIDStr, chipID.c_str());  // Konversi String ke char[]  // Konversi int ke char[]
 
-  sprintf(data_buffer, data, chipID, voltage, current, power, energy, frequency, pf);
+  char timeStr[20];
+  sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
+          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+  snprintf(data, MSG_BUFFER_SIZE, jsonData, chipIDStr, timeStr, rssi, freq, voltage, current, power, energy, frequency, pf);
 }
 
 void PzemMonitor() {
