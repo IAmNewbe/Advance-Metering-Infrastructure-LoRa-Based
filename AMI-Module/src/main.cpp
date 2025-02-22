@@ -7,6 +7,7 @@
 #include <Adafruit_SSD1306.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include "time.h"
 
 // START DISPLAY PREQUISITE
 #define SCREEN_WIDTH 128
@@ -59,21 +60,42 @@ int led = 2;
 int counter =0;
 
 float voltage, current, power, energy, frequency, pf;
+String chipID;
 
 #define MSG_BUFFER_SIZE  (500)
-char data[MSG_BUFFER_SIZE] = "{\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\",\"Power_PLN\":\"%.2f\",\"Energy_PLN\":\"%.2f\",\"Frekuensi_PLN\":\"%.2f\",\"Power_Faktor_PLN\":\"%.2f\"}";
+char data[MSG_BUFFER_SIZE] = "{\"DevUI\":\"%.2f\",\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\",\"Power_PLN\":\"%.2f\",\"Energy_PLN\":\"%.2f\",\"Frekuensi_PLN\":\"%.2f\",\"Power_Faktor_PLN\":\"%.2f\"}";
 char data_buffer[500];
+
+const char* ssid = "crustea";
+const char* password = "crustea1234";
+const char* ntpServer = "pool.ntp.org"; // Server NTP
+const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
+const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
+struct tm timeinfo;
+
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
 
 void LoRaSetUp();
 void LoRaSend();
 void ReadPzem();
 void PzemMonitor();
+void updateTime();
+void setup_wifi();
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
   LoRaSetUp();
   pinMode(led, OUTPUT);
+
+  setup_wifi();
+  /// Konfigurasi NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("Menunggu sinkronisasi waktu...");
+
+  // Ambil waktu pertama kali
+  updateTime();
   
   if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -84,7 +106,7 @@ void setup() {
   oled.setTextSize(1);
   oled.setTextColor(SSD1306_WHITE);
   oled.setCursor(0, 0);
-  oled.println("CAPSTONE");
+  oled.println("Power Meter");
   oled.display();
   delay(3500);
 }
@@ -92,8 +114,15 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   ReadPzem();
+  if (WiFi.status() != WL_CONNECTED) {
+    setup_wifi();
+  }
   // PzemMonitor();
-  LoRaSend();
+  if (millis() - lastSend > 10000) {
+    LoRaSend();
+    Serial.print("Send..");
+    lastSend = millis();
+  }
 }
 
 void LoRaSetUp() {
@@ -132,7 +161,12 @@ void ReadPzem() {
   frequency = pzem.frequency();
   pf = pzem.pf();
 
-  sprintf(data_buffer, data, voltage, current, power, energy, frequency, pf);
+  // Mendapatkan MAC address
+  chipID = WiFi.macAddress();
+  Serial.print("Chip ID (MAC Address): ");
+  Serial.println(chipID);
+
+  sprintf(data_buffer, data, chipID, voltage, current, power, energy, frequency, pf);
 }
 
 void PzemMonitor() {
@@ -160,4 +194,31 @@ void PzemMonitor() {
         Serial.print("PF: ");           Serial.println(pf);
     }
     Serial.println();
+}
+
+void updateTime() {
+  if (getLocalTime(&timeinfo)) {
+    Serial.println("Waktu diperbarui dari NTP!");
+  } else {
+    Serial.println("Gagal mendapatkan waktu dari NTP");
+  }
+}
+
+void setup_wifi() {
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("Wifi Not Connected");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
 }

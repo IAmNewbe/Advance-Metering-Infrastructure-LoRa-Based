@@ -1,11 +1,13 @@
 #include <Arduino.h>
-#include <PubSubClient.h>
-#include <WiFi.h>
+// #include <PubSubClient.h>
+// #include <WiFi.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include <AntaresESPMQTT.h>
+#include "time.h"
 
 // START DISPLAY PREQUISITE
 #define SCREEN_WIDTH 128
@@ -16,6 +18,15 @@
 
 // Inisialisasi LCD dan OLED
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+#define ACCESSKEY "YOUR-ACCESS-KEY"       // Antares account access key
+#define WIFISSID "YOUR-WIFI-SSID"         // Wi-Fi SSID to connect to
+#define PASSWORD "YOUR-WIFI-PASSWORD"     // Wi-Fi password
+
+#define projectName "YOUR-APPLICATION-NAME"   // Name of the application created in Antares
+#define deviceName "YOUR-DEVICE-NAME"     // Name of the device created in Antares
+
+AntaresESPMQTT antares(ACCESSKEY);
 
 #define ss 5
 #define rst 14
@@ -32,18 +43,17 @@ float voltage, current, power, energy, frequency, pf;
 char data[MSG_BUFFER_SIZE] = "{\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\",\"Power_PLN\":\"%.2f\",\"Energy_PLN\":\"%.2f\",\"Frekuensi_PLN\":\"%.2f\",\"Power_Faktor_PLN\":\"%.2f\"}";
 char data_buffer[500];
 
-#define TOKEN "ACCESS_TOKEN"
-
 const char* ssid = "crustea";
 const char* password = "crustea1234";
-const char* mqtt_server = "18.140.254.213";
-const int mqtt_port = 1883;
-const char* topic = "v1/devices/me/telemetry";
+const char* ntpServer = "pool.ntp.org"; // Server NTP
+const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
+const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
 char status_koneksi[8] = "Offline";
 String LoRaData;
+struct tm timeinfo;
 
-WiFiClient wifiClient;
-PubSubClient client(wifiClient);
+// WiFiClient wifiClient;
+// PubSubClient client(wifiClient);
 
 void Display();
 void LoRaSetUp();
@@ -52,6 +62,7 @@ void reconnect();
 void callback(char* topic, byte* payload, unsigned int length);
 void SendMessageToServer();
 void LoRaReceiver();
+void updateTime();
 
 void setup() {
   // put your setup code here, to run once:
@@ -59,7 +70,7 @@ void setup() {
   LoRaSetUp();
   pinMode(led, OUTPUT);
 
-  SetupWifi();
+  // SetupWifi();
   if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     Serial.println(F("SSD1306 allocation failed"));
     while (1);
@@ -72,27 +83,34 @@ void setup() {
   oled.println("CAPSTONE");
   oled.display();
 
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
+  antares.setDebug(true);
+  antares.wifiConnection(WIFISSID, PASSWORD);
+  antares.setMqttServer();
+  
+  /// Konfigurasi NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("Menunggu sinkronisasi waktu...");
+
+  // Ambil waktu pertama kali
+  updateTime();
   delay(3500);
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   LoRaReceiver();
-  if (!client.connected()) {
-    reconnect();
-  } else {
-    strcpy(status_koneksi, "Online");
-  }
+  antares.checkMqttConnection();
+  // if (!client.connected()) {
+  //   reconnect();
+  // } else {
+  //   strcpy(status_koneksi, "Online");
+  // }
 
-  if ( millis() - lastSend > 1000 ) { // Update and send only after 2 seconds
+  if ( millis() - lastSend > 10000 ) { // Update and send only after 2 seconds
     SendMessageToServer();
     Serial.print("Send..");
     lastSend = millis();
   }
-
-  client.loop();
 }
 
 void LoRaSetUp() {
@@ -110,16 +128,6 @@ void LoRaSetUp() {
 }
 
 void SetupWifi() {
-
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    strcpy(status_koneksi, "Offline");
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  strcpy(status_koneksi, "Online");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
   delay(1000);
@@ -136,18 +144,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    if (client.connect("ESP8266 Device", TOKEN, NULL)) {
-      Serial.println("connected");
-      strcpy(status_koneksi, "Online");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
-    }
-  }
+  Serial.println("unused");
 }
 
 void LoRaReceiver() {
@@ -169,5 +166,32 @@ void LoRaReceiver() {
 }
 
 void SendMessageToServer() {
-  client.publish(topic , LoRaData.c_str());
+  // Perbarui waktu sebelum mengirim data
+  updateTime();
+
+  // Format waktu menjadi string (YYYY-MM-DD HH:MM:SS)
+  char timeStr[20];
+  sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
+          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+  // Tambahkan data sensor
+  antares.add("timestamp", timeStr);  // ⏳ Menambahkan waktu ke payload
+  antares.add("voltage", voltage);
+  antares.add("current", current);
+  antares.add("power", power);
+  antares.add("energy", energy);
+  antares.add("frequency", frequency);
+  antares.add("power_factor", pf);
+
+  // Kirim data ke Antares MQTT
+  antares.publish(projectName, deviceName);
+}
+
+void updateTime() {
+  if (getLocalTime(&timeinfo)) {
+    Serial.println("Waktu diperbarui dari NTP!");
+  } else {
+    Serial.println("Gagal mendapatkan waktu dari NTP");
+  }
 }
