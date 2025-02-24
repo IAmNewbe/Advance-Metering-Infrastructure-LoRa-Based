@@ -19,12 +19,12 @@
 // Inisialisasi LCD dan OLED
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#define ACCESSKEY "YOUR-ACCESS-KEY"       // Antares account access key
-#define WIFISSID "YOUR-WIFI-SSID"         // Wi-Fi SSID to connect to
-#define PASSWORD "YOUR-WIFI-PASSWORD"     // Wi-Fi password
+#define ACCESSKEY "c1bf19abbffd6f70:2199a99279d7edd6"       // Antares account access key
+#define WIFISSID "crustea"         // Wi-Fi SSID to connect to
+#define PASSWORD "crustea1234"     // Wi-Fi password
 
-#define projectName "YOUR-APPLICATION-NAME"   // Name of the application created in Antares
-#define deviceName "YOUR-DEVICE-NAME"     // Name of the device created in Antares
+#define projectName "AMI_Module"   // Name of the application created in Antares
+#define deviceName "LoRa_Gateway"     // Name of the device created in Antares
 
 AntaresESPMQTT antares(ACCESSKEY);
 
@@ -39,9 +39,10 @@ int counter =0;
 
 float voltage, current, power, energy, frequency, pf;
 
-#define MSG_BUFFER_SIZE  (500)
+const int MSG_BUFFER_SIZE = 600;
 char data[MSG_BUFFER_SIZE] = "{\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\",\"Power_PLN\":\"%.2f\",\"Energy_PLN\":\"%.2f\",\"Frekuensi_PLN\":\"%.2f\",\"Power_Faktor_PLN\":\"%.2f\"}";
 char data_buffer[500];
+char jsonData[MSG_BUFFER_SIZE];
 
 const char* ssid = "crustea";
 const char* password = "crustea1234";
@@ -51,6 +52,10 @@ const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesi
 char status_koneksi[8] = "Offline";
 String LoRaData;
 struct tm timeinfo;
+char timeStr[20];
+int rssi;
+char time_received[20];
+char time_send[20];
 
 // WiFiClient wifiClient;
 // PubSubClient client(wifiClient);
@@ -60,7 +65,7 @@ void LoRaSetUp();
 void SetupWifi();
 void reconnect();
 void callback(char* topic, byte* payload, unsigned int length);
-void SendMessageToServer();
+void SendMessageToServer(int rssi);
 void LoRaReceiver();
 void updateTime();
 
@@ -86,7 +91,7 @@ void setup() {
   antares.setDebug(true);
   antares.wifiConnection(WIFISSID, PASSWORD);
   antares.setMqttServer();
-  
+
   /// Konfigurasi NTP
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   Serial.println("Menunggu sinkronisasi waktu...");
@@ -106,11 +111,11 @@ void loop() {
   //   strcpy(status_koneksi, "Online");
   // }
 
-  if ( millis() - lastSend > 10000 ) { // Update and send only after 2 seconds
-    SendMessageToServer();
-    Serial.print("Send..");
-    lastSend = millis();
-  }
+  // if ( millis() - lastSend > 10000 ) { // Update and send only after 2 seconds
+  //   SendMessageToServer();
+  //   Serial.print("Send..");
+  //   lastSend = millis();
+  // }
 }
 
 void LoRaSetUp() {
@@ -146,52 +151,111 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void reconnect() {
   Serial.println("unused");
 }
+// Fungsi untuk ekstraksi value JSON
+String extractValue(String json, String key) {
+  int start = json.indexOf("\"" + key + "\":");
+  if (start == -1) return "";
+  start = json.indexOf(":", start) + 1;
+  int end;
+  if (json[start] == '\"') {  // Value berupa string
+    start++;
+    end = json.indexOf("\"", start);
+  } else {  // Value berupa angka
+    end = json.indexOf(",", start);
+    if (end == -1) end = json.indexOf("}", start);
+  }
+  return json.substring(start, end);
+}
 
 void LoRaReceiver() {
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
-    // received a packet
-    Serial.print("Received packet '");
-
-    // read packet
+    // Saat paket diterima
     while (LoRa.available()) {
       LoRaData = LoRa.readString();
-      Serial.print(LoRaData); 
+    }
+    rssi = LoRa.packetRssi();
+    Serial.print("Received packet: ");
+    Serial.println(LoRaData);
+    Serial.print("RSSI: ");
+    Serial.println(rssi);
+
+    // Dapatkan waktu saat data diterima
+    if (getLocalTime(&timeinfo)) {
+      sprintf(time_received, "%04d-%02d-%02d %02d:%02d:%02d", 
+              timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     }
 
-    // print RSSI of packet
-    Serial.print("' with RSSI ");
-    Serial.println(LoRa.packetRssi());
+    // Buat JSON baru untuk dikirim ke server MQTT
+    sprintf(jsonData, 
+            "{\"devUI\":\"%s\",\"time_at_device\":\"%s\","
+            "\"time_received_at_gateway\":\"%s\","
+            "\"RSSI\":%d,\"protocol\":\"LoRa\",\"data\":%s}", 
+            extractValue(LoRaData, "devUI").c_str(), 
+            extractValue(LoRaData, "time_at_device").c_str(),
+            time_received,
+            rssi,
+            extractValue(LoRaData, "data").c_str());
+
+    Serial.print("Data JSON: ");
+    Serial.println(jsonData);
+
+    // Persiapan waktu saat data akan dikirim ke server
+    if (getLocalTime(&timeinfo)) {
+      sprintf(time_send, "%04d-%02d-%02d %02d:%02d:%02d", 
+              timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    }
+    SendMessageToServer(rssi);
   }
 }
 
-void SendMessageToServer() {
-  // Perbarui waktu sebelum mengirim data
-  updateTime();
+void SendMessageToServer(int rssi) {
+  // Ambil value dari JSON LoRaData
+  String devUI = extractValue(LoRaData, "devUI");
+  String timeAtDevice = extractValue(LoRaData, "time_at_device");
+  String timeReceivedAtGateway = extractValue(LoRaData, "time_received_at_gateway");
+  String timeSendFromGateway = extractValue(LoRaData, "time_send_from_gateway");
+  String protocol = "mqtt";
+  
+  String voltage = extractValue(LoRaData, "voltage");
+  String current = extractValue(LoRaData, "current");
+  String power = extractValue(LoRaData, "power");
+  String energy = extractValue(LoRaData, "energy");
+  String frequency = extractValue(LoRaData, "frequency");
+  String powerFactor = extractValue(LoRaData, "power_factor");
 
-  // Format waktu menjadi string (YYYY-MM-DD HH:MM:SS)
-  char timeStr[20];
-  sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
-          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
-          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-
-  // Tambahkan data sensor
-  antares.add("timestamp", timeStr);  // ⏳ Menambahkan waktu ke payload
+  // Tambahkan ke payload Antares satu per satu (tanpa objek bersarang)
+  antares.add("devUI", devUI);
+  antares.add("time_at_device", timeAtDevice);
+  antares.add("time_received_at_gateway", time_received);
+  antares.add("time_send_from_gateway", time_send);
+  antares.add("RSSI", rssi);
+  antares.add("protocol", protocol);
+  
   antares.add("voltage", voltage);
   antares.add("current", current);
   antares.add("power", power);
   antares.add("energy", energy);
   antares.add("frequency", frequency);
-  antares.add("power_factor", pf);
+  antares.add("power_factor", powerFactor);
 
-  // Kirim data ke Antares MQTT
   antares.publish(projectName, deviceName);
+  Serial.println("Data sent to MQTT server.");
 }
 
 void updateTime() {
   if (getLocalTime(&timeinfo)) {
     Serial.println("Waktu diperbarui dari NTP!");
+    sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
+      timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+      timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    Serial.print("time: ");
+    Serial.println(timeStr);
   } else {
     Serial.println("Gagal mendapatkan waktu dari NTP");
   }
+  
 }
+

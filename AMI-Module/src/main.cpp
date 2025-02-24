@@ -59,13 +59,14 @@ unsigned long lastOn;
 int led = 2;
 int counter =0;
 
-float voltage, current, power, energy, frequency, pf, rssi, freq;
+float voltage, current, power, energy, frequency, pf, rssi;
+double lora_freq = 433E6;
 String chipID;
 char chipIDStr[20];
 
 const int MSG_BUFFER_SIZE = 600;
 char data[MSG_BUFFER_SIZE];
-const char* jsonData = "{\"devUI\":\"%s\",\"time_at_device\":\"%s\",\"RSSI\":%.1f,\"frequency\":%.1f,\"data\":{"
+const char* jsonData = "{\"devUI\":\"%s\",\"time_at_device\":\"%s\",\"frequency\":%.1f,\"data\":{"
                               "\"voltage\":%.2f,\"current\":%.2f,\"power\":%.2f,\"energy\":%.2f,"
                               "\"frequency\":%.2f,\"power_factor\":%.2f}}";
 
@@ -75,7 +76,7 @@ const char* ntpServer = "pool.ntp.org"; // Server NTP
 const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
 const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
 struct tm timeinfo;
-
+char timeStr[20];
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
@@ -122,6 +123,7 @@ void loop() {
   }
   // PzemMonitor();
   if (millis() - lastSend > 10000) {
+    updateTime();
     LoRaSend();
     Serial.print("Send..");
     lastSend = millis();
@@ -134,7 +136,7 @@ void LoRaSetUp() {
 
   //setup LoRa transceiver module
   LoRa.setPins(ss, rst, dio0);
-  while (!LoRa.begin(433E6)) {
+  while (!LoRa.begin(lora_freq)) {
     Serial.println(".");
     delay(500);
   }
@@ -153,7 +155,7 @@ void LoRaSend() {
   LoRa.endPacket();
   counter++;
 
-  delay(1000);
+  // delay(1000);
 }
 
 void ReadPzem() {
@@ -170,12 +172,7 @@ void ReadPzem() {
   Serial.println(chipID);
   strcpy(chipIDStr, chipID.c_str());  // Konversi String ke char[]  // Konversi int ke char[]
 
-  char timeStr[20];
-  sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
-          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
-          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-
-  snprintf(data, MSG_BUFFER_SIZE, jsonData, chipIDStr, timeStr, rssi, freq, voltage, current, power, energy, frequency, pf);
+  snprintf(data, MSG_BUFFER_SIZE, jsonData, chipIDStr, timeStr, lora_freq, voltage, current, power, energy, frequency, pf);
 }
 
 void PzemMonitor() {
@@ -208,6 +205,9 @@ void PzemMonitor() {
 void updateTime() {
   if (getLocalTime(&timeinfo)) {
     Serial.println("Waktu diperbarui dari NTP!");
+    sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d", 
+      timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
+      timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
   } else {
     Serial.println("Gagal mendapatkan waktu dari NTP");
   }
