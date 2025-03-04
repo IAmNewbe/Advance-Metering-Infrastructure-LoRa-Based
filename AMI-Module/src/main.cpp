@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SH110X.h>
 #include <SPI.h>
 #include <LoRa.h>
 #include "time.h"
@@ -13,42 +13,28 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 
-// Ganti alamat I2C sesuai dengan hasil scan
-#define OLED_ADDR 0x3C
+#define OLED_RESET    -1    // Reset tidak digunakan
+#define SCREEN_ADDRESS 0x3C // Alamat I2C default  //   QT-PY / XIAO
+Adafruit_SH1106G oled = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// Inisialisasi LCD dan OLED
-Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#if !defined(PZEM_RX_PIN) && !defined(PZEM_TX_PIN)
+#if !defined(PZEM_RX_PIN) && !defined(PZEM_TX_PIN) && !defined(PZEM_SERIAL)
+#define PZEM_SERIAL Serial2
 #define PZEM_RX_PIN 16
 #define PZEM_TX_PIN 17
+
 #endif
 
-#if !defined(PZEM_SERIAL)
-#define PZEM_SERIAL Serial2
+#if defined(USE_SOFTWARE_SERIAL)
+//SoftwareSerial pzemSWSerial(PZEM_RX_PIN, PZEM_TX_PIN);
+//PZEM004Tv30 pzem(pzemSWSerial);
+
+#elif defined(ESP32)
+PZEM004Tv30 pzem(PZEM_SERIAL, PZEM_RX_PIN, PZEM_TX_PIN);
+#else
+PZEM004Tv30 pzem(PZEM_SERIAL);
+
 #endif
-
-#define NUM_PZEMS 3
-#define HEX 16
-
-PZEM004Tv30 pzems[NUM_PZEMS];
-
-/* *********************
- * Uncomment USE_SOFTWARE_SERIAL in order to enable Softare serial
- *
- * Does not work for ESP32
- ***********************/
-//#define USE_SOFTWARE_SERIAL
-#if defined(USE_SOFTWARE_SERIAL) && defined(ESP32)
-    #error "Can not use SoftwareSerial with ESP32"
-#elif defined(USE_SOFTWARE_SERIAL)
-
-#include <SoftwareSerial.h>
-
-SoftwareSerial pzemSWSerial(PZEM_RX_PIN, PZEM_TX_PIN);
-#endif
-
-PZEM004Tv30 pzem(PZEM_SERIAL, PZEM_RX_PIN, PZEM_TX_PIN  , 0x01);
 
 #define ss 5
 #define rst 14
@@ -86,6 +72,7 @@ void ReadPzem();
 void PzemMonitor();
 void updateTime();
 void setup_wifi();
+void displayData(float power, float energy, float voltage, float current, float frequency, float pf, String time);
 
 void setup() {
   // put your setup code here, to run once:
@@ -101,16 +88,21 @@ void setup() {
   // Ambil waktu pertama kali
   updateTime();
   
-  if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    while (1);
+  if (!oled.begin(SCREEN_ADDRESS, true)) { // Gunakan alamat I2C 0x3C dan reset internal
+    Serial.println(F("SH1106 allocation failed"));
+    for (;;);
   }
+
   oled.display();
   oled.clearDisplay();
-  oled.setTextSize(1);
-  oled.setTextColor(SSD1306_WHITE);
-  oled.setCursor(0, 0);
-  oled.println("Power Meter");
+  oled.setTextSize(2);
+  oled.setTextColor(SH110X_WHITE);
+  oled.setCursor(46, 16);
+  oled.println("AMI");
+  oled.setCursor(28, 32);
+  oled.println("Module");
+  oled.drawLine(0, 8, 127, 8, SH110X_WHITE);
+  oled.drawLine(0, 55, 127, 55, SH110X_WHITE);
   oled.display();
   delay(3500);
 }
@@ -166,6 +158,7 @@ void ReadPzem() {
   frequency = pzem.frequency();
   pf = pzem.pf();
 
+  displayData(power, energy, voltage, current, frequency, pf, timeStr);
   // Mendapatkan MAC address
   chipID = WiFi.macAddress();
   Serial.print("Chip ID (MAC Address): ");
@@ -230,4 +223,51 @@ void setup_wifi() {
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
+}
+
+void displayData(float power, float energy, float voltage, float current, float frequency, float pf, String time) {
+  oled.clearDisplay();
+  oled.setTextSize(1); // Ukuran teks normal
+  oled.setTextColor(SH110X_WHITE);
+
+  int roundedPower = isnan(power) ? 0 : round(power);
+  int roundedVoltage = isnan(voltage) ? 0 : round(voltage);
+  int roundedFrequency = isnan(frequency) ? 0 : round(frequency);
+  
+  float formattedEnergy = isnan(energy) ? 0.0 : floor(energy * 100) / 100.0;
+  float formattedCurrent = isnan(current) ? 0.0 : floor(current * 100) / 100.0;
+  float formattedPF = isnan(pf) ? 0.0 : floor(pf * 100) / 100.0;
+  
+  oled.setCursor(0, 0);
+  oled.print("Power    : "); oled.print(roundedPower); 
+  oled.setCursor(102, 0);
+  oled.println("W");
+
+  oled.setCursor(0, 8);
+  oled.print("Energy   : "); oled.print(formattedEnergy);
+  oled.setCursor(102, 8);
+  oled.println("kWh");
+
+  oled.setCursor(0, 16);
+  oled.print("Voltage  : "); oled.print(roundedVoltage);
+  oled.setCursor(102, 16);
+  oled.println("V");
+
+  oled.setCursor(0, 24);
+  oled.print("Current  : "); oled.print(formattedCurrent); 
+  oled.setCursor(102, 24);
+  oled.println("A");
+
+  oled.setCursor(0, 32);
+  oled.print("Frequency: "); oled.print(roundedFrequency); 
+  oled.setCursor(102, 32);
+  oled.println("Hz");
+
+  oled.setCursor(0, 40);
+  oled.print("PF       : "); oled.println(formattedPF);
+
+  oled.setCursor(0, 48);
+  oled.println("Time     : "); oled.println(time);
+
+  oled.display();
 }

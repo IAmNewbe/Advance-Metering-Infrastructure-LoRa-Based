@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <AntaresESPMQTT.h>
+#include <AntaresESPHTTP.h>
 #include "time.h"
 
 // START DISPLAY PREQUISITE
@@ -26,7 +27,9 @@ Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define projectName "AMI_Module"   // Name of the application created in Antares
 #define deviceName "LoRa_Gateway"     // Name of the device created in Antares
 
-AntaresESPMQTT antares(ACCESSKEY);
+// Inisialisasi Objek Antares
+AntaresESPHTTP antaresHTTP(ACCESSKEY);
+AntaresESPMQTT antaresMQTT(ACCESSKEY);
 
 #define ss 5
 #define rst 14
@@ -56,7 +59,10 @@ char timeStr[20];
 int rssi;
 char time_received[20];
 char time_send[20];
-
+unsigned long lastSwitchTime = 0;
+const long switchInterval = 30000; // Interval pergantian 30 detik
+bool useMQTT = true;
+String protocol = "MQTT";
 // WiFiClient wifiClient;
 // PubSubClient client(wifiClient);
 
@@ -68,13 +74,15 @@ void callback(char* topic, byte* payload, unsigned int length);
 void SendMessageToServer(int rssi);
 void LoRaReceiver();
 void updateTime();
+void displayMainScreen(String deviceType, String wifiStatus, String ssid, String ntpTime, String lastReceived);
+void displayJsonData(String jsonData, String protocol);
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
   LoRaSetUp();
   pinMode(led, OUTPUT);
-
+ 
   // SetupWifi();
   if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -82,15 +90,37 @@ void setup() {
   }
   oled.display();
   oled.clearDisplay();
-  oled.setTextSize(1);
+  oled.setTextSize(2);
   oled.setTextColor(SSD1306_WHITE);
-  oled.setCursor(0, 0);
-  oled.println("CAPSTONE");
+
+  // Hitung posisi tengah secara horizontal dan vertikal
+  int16_t x1, y1;
+  uint16_t w, h;
+  oled.getTextBounds("LoRa Gateway", 0, 0, &x1, &y1, &w, &h);
+
+  int x = (oled.width() - w) / 2;
+  int y = (oled.height() - h) / 2;
+
+  // Gambar garis horizontal di atas teks
+  oled.drawLine(x, y - 5, x + w, y - 5, SSD1306_WHITE);
+
+  // Set kursor ke posisi tengah
+  oled.setCursor(x, y);
+
+  // Tampilkan teks
+  oled.println("LoRa");
+  oled.setCursor(x, y + h);
+  oled.println("Gateway");
+
+  // Gambar garis horizontal di bawah teks
+  oled.drawLine(x, y + 2 * h + 45, x + w, y + 2 * h + 45, SSD1306_WHITE);
+
+  // Tampilkan perubahan pada layar
   oled.display();
 
-  antares.setDebug(true);
-  antares.wifiConnection(WIFISSID, PASSWORD);
-  antares.setMqttServer();
+  antaresHTTP.wifiConnection(WIFISSID, PASSWORD);
+  antaresMQTT.wifiConnection(WIFISSID, PASSWORD);
+  antaresMQTT.setMqttServer();
 
   /// Konfigurasi NTP
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -104,7 +134,9 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   LoRaReceiver();
-  antares.checkMqttConnection();
+  antaresMQTT.checkMqttConnection();
+
+  displayMainScreen("LoRa Gateway", "Connected", WIFISSID, timeStr, time_received);
   // if (!client.connected()) {
   //   reconnect();
   // } else {
@@ -179,7 +211,7 @@ void LoRaReceiver() {
     Serial.println(LoRaData);
     Serial.print("RSSI: ");
     Serial.println(rssi);
-
+    displayJsonData(LoRaData, protocol);
     // Dapatkan waktu saat data diterima
     if (getLocalTime(&timeinfo)) {
       sprintf(time_received, "%04d-%02d-%02d %02d:%02d:%02d", 
@@ -215,9 +247,6 @@ void SendMessageToServer(int rssi) {
   // Ambil value dari JSON LoRaData
   String devUI = extractValue(LoRaData, "devUI");
   String timeAtDevice = extractValue(LoRaData, "time_at_device");
-  String timeReceivedAtGateway = extractValue(LoRaData, "time_received_at_gateway");
-  String timeSendFromGateway = extractValue(LoRaData, "time_send_from_gateway");
-  String protocol = "mqtt";
   
   String voltage = extractValue(LoRaData, "voltage");
   String current = extractValue(LoRaData, "current");
@@ -226,23 +255,47 @@ void SendMessageToServer(int rssi) {
   String frequency = extractValue(LoRaData, "frequency");
   String powerFactor = extractValue(LoRaData, "power_factor");
 
-  // Tambahkan ke payload Antares satu per satu (tanpa objek bersarang)
-  antares.add("devUI", devUI);
-  antares.add("time_at_device", timeAtDevice);
-  antares.add("time_received_at_gateway", time_received);
-  antares.add("time_send_from_gateway", time_send);
-  antares.add("RSSI", rssi);
-  antares.add("protocol", protocol);
-  
-  antares.add("voltage", voltage);
-  antares.add("current", current);
-  antares.add("power", power);
-  antares.add("energy", energy);
-  antares.add("frequency", frequency);
-  antares.add("power_factor", powerFactor);
+  // Cek apakah waktu untuk pergantian protokol
+  if (millis() - lastSwitchTime > switchInterval) {
+    lastSwitchTime = millis();
+    useMQTT = !useMQTT;
+  }
 
-  antares.publish(projectName, deviceName);
-  Serial.println("Data sent to MQTT server.");
+  // Kirim data menggunakan protokol yang aktif
+  if (useMQTT) {
+    antaresMQTT.add("devUI", devUI);
+    antaresMQTT.add("time_at_device", timeAtDevice);
+    antaresMQTT.add("time_received_at_gateway", time_received);
+    antaresMQTT.add("time_send_from_gateway", time_send);
+    antaresMQTT.add("RSSI", rssi);
+    antaresMQTT.add("protocol", "mqtt");
+    antaresMQTT.add("voltage", voltage);
+    antaresMQTT.add("current", current);
+    antaresMQTT.add("power", power);
+    antaresMQTT.add("energy", energy);
+    antaresMQTT.add("frequency", frequency);
+    antaresMQTT.add("power_factor", powerFactor);
+    
+
+    antaresMQTT.publish(projectName, deviceName);
+    Serial.println("Mengirim data dengan MQTT");
+  } else {
+    antaresHTTP.add("devUI", devUI);
+    antaresHTTP.add("time_at_device", timeAtDevice);
+    antaresHTTP.add("time_received_at_gateway", time_received);
+    antaresHTTP.add("time_send_from_gateway", time_send);
+    antaresHTTP.add("RSSI", rssi);
+    antaresHTTP.add("protocol", "http");
+    antaresHTTP.add("voltage", voltage);
+    antaresHTTP.add("current", current);
+    antaresHTTP.add("power", power);
+    antaresHTTP.add("energy", energy);
+    antaresHTTP.add("frequency", frequency);
+    antaresHTTP.add("power_factor", powerFactor);
+
+    antaresHTTP.send(projectName, deviceName);
+    Serial.println("Mengirim data dengan HTTP");
+  }
 }
 
 void updateTime() {
@@ -256,6 +309,34 @@ void updateTime() {
   } else {
     Serial.println("Gagal mendapatkan waktu dari NTP");
   }
-  
 }
 
+void displayMainScreen(String deviceType, String wifiStatus, String ssid, String ntpTime, String lastReceived) {
+  oled.clearDisplay();
+  oled.setCursor(0, 0);
+  oled.setTextSize(1);
+  oled.print("Device: ");
+  oled.println(deviceType);
+  oled.print("WiFi: ");
+  oled.println(wifiStatus);
+  oled.print("SSID: ");
+  oled.println(ssid);
+  oled.print("Time: ");
+  oled.println(ntpTime);
+  oled.print("Last Data: ");
+  oled.println(lastReceived);
+  oled.display();
+}
+
+void displayJsonData(String jsonData, String protocol) {
+  oled.clearDisplay();
+  oled.setCursor(0, 0);
+  oled.setTextSize(1);
+  oled.println("Data Received:");
+  oled.println(jsonData);
+  oled.println("Sending to Server...");
+  oled.print("Protocol: ");
+  oled.println(protocol);
+  oled.display();
+  delay(2000); // Tampilkan sementara
+}
