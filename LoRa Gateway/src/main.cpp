@@ -102,18 +102,18 @@ void setup() {
   int y = (oled.height() - h) / 2;
 
   // Gambar garis horizontal di atas teks
-  oled.drawLine(x, y - 5, x + w, y - 5, SSD1306_WHITE);
+  oled.drawLine(0, 8, 127, 8, SSD1306_WHITE);
 
   // Set kursor ke posisi tengah
-  oled.setCursor(x, y);
+  oled.setCursor(45, 16);
 
   // Tampilkan teks
   oled.println("LoRa");
-  oled.setCursor(x, y + h);
+  oled.setCursor(27, 32);
   oled.println("Gateway");
 
   // Gambar garis horizontal di bawah teks
-  oled.drawLine(x, y + 2 * h + 45, x + w, y + 2 * h + 45, SSD1306_WHITE);
+  oled.drawLine(0, 55, 127, 55, SSD1306_WHITE);
 
   // Tampilkan perubahan pada layar
   oled.display();
