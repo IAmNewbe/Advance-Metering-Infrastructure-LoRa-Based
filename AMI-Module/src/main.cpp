@@ -256,7 +256,7 @@ void displayData(float power, float energy, float voltage, float current, float 
   oled.setCursor(0, 24);
   oled.print("Current  : "); oled.print(formattedCurrent); 
   oled.setCursor(102, 24);
-  oled.println("A");
+  oled.println("Amp");
 
   oled.setCursor(0, 32);
   oled.print("Frequency: "); oled.print(roundedFrequency); 
@@ -266,8 +266,14 @@ void displayData(float power, float energy, float voltage, float current, float 
   oled.setCursor(0, 40);
   oled.print("PF       : "); oled.println(formattedPF);
 
-  oled.setCursor(0, 48);
-  oled.println("Time     : "); oled.println(time);
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("Wifi Not Connected");
+    oled.setCursor(0, 48);
+    oled.println("Time     : "); oled.println("Wifi Not Connected");
+  }else {
+    oled.setCursor(0, 48);
+    oled.println("Time     : "); oled.println(time);
+  }
 
   oled.display();
 }
