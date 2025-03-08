@@ -56,8 +56,8 @@ const char* jsonData = "{\"devUI\":\"%s\",\"time_at_device\":\"%s\",\"frequency\
                               "\"voltage\":%.2f,\"current\":%.2f,\"power\":%.2f,\"energy\":%.2f,"
                               "\"frequency\":%.2f,\"power_factor\":%.2f}}";
 
-const char* ssid = "crustea";
-const char* password = "crustea1234";
+String ssid = "X282 2G";
+const char* password = "itssurabaya";
 const char* ntpServer = "pool.ntp.org"; // Server NTP
 const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
 const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
@@ -213,7 +213,7 @@ void setup_wifi() {
   Serial.print("Connecting to ");
   Serial.println(ssid);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid.c_str(), password);
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.print("Wifi Not Connected");
