@@ -231,10 +231,11 @@ void displayData(float power, float energy, float voltage, float current, float 
   oled.setTextColor(SH110X_WHITE);
 
   int roundedPower = isnan(power) ? 0 : round(power);
-  int roundedVoltage = isnan(voltage) ? 0 : round(voltage);
+  // int roundedVoltage = isnan(voltage) ? 0 : round(voltage);
   int roundedFrequency = isnan(frequency) ? 0 : round(frequency);
   
   float formattedEnergy = isnan(energy) ? 0.0 : floor(energy * 100) / 100.0;
+  float roundedVoltage = isnan(voltage) ? 0.0 : floor(voltage * 100) / 100.0;
   float formattedCurrent = isnan(current) ? 0.0 : floor(current * 100) / 100.0;
   float formattedPF = isnan(pf) ? 0.0 : floor(pf * 100) / 100.0;
   
