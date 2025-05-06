@@ -20,16 +20,18 @@
 // Inisialisasi LCD dan OLED
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#define ACCESSKEY "c1bf19abbffd6f70:2199a99279d7edd6"       // Antares account access key
-#define WIFISSID "crustea"         // Wi-Fi SSID to connect to
-#define PASSWORD "crustea1234"     // Wi-Fi password
+#define ACCESSKEY "fbcc54e8fa44769a:601102b2dae28971"       // Antares account access key
+#define WIFISSID "X282 2G"         // Wi-Fi SSID to connect to
+#define PASSWORD "itssurabaya"     // Wi-Fi password
 
-#define projectName "AMI_Module"   // Name of the application created in Antares
+#define projectName "AMIModule"   // Name of the application created in Antares
 #define deviceName "LoRa_Gateway"     // Name of the device created in Antares
 
 // Inisialisasi Objek Antares
 AntaresESPHTTP antaresHTTP(ACCESSKEY);
 AntaresESPMQTT antaresMQTT(ACCESSKEY);
+
+WiFiClient myClient;
 
 #define ss 5
 #define rst 14
@@ -47,8 +49,8 @@ char data[MSG_BUFFER_SIZE] = "{\"Voltage_PLN\":\"%.2f\",\"Current_PLN\":\"%.2f\"
 char data_buffer[500];
 char jsonData[MSG_BUFFER_SIZE];
 
-const char* ssid = "crustea";
-const char* password = "crustea1234";
+String ssid = "X282 2G";
+const char* password = "itssurabaya";
 const char* ntpServer = "pool.ntp.org"; // Server NTP
 const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
 const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
@@ -58,8 +60,9 @@ struct tm timeinfo;
 char timeStr[20];
 int rssi;
 char time_received[20];
-char time_send[20];
+char time_send[30];
 unsigned long lastSwitchTime = 0;
+unsigned long rebootInterval = 86400000;
 const long switchInterval = 30000; // Interval pergantian 30 detik
 bool useMQTT = true;
 String protocol = "MQTT";
@@ -93,7 +96,6 @@ void setup() {
   oled.setTextSize(2);
   oled.setTextColor(SSD1306_WHITE);
 
-  // Hitung posisi tengah secara horizontal dan vertikal
   int16_t x1, y1;
   uint16_t w, h;
   oled.getTextBounds("LoRa Gateway", 0, 0, &x1, &y1, &w, &h);
@@ -101,18 +103,14 @@ void setup() {
   int x = (oled.width() - w) / 2;
   int y = (oled.height() - h) / 2;
 
-  // Gambar garis horizontal di atas teks
   oled.drawLine(0, 8, 127, 8, SSD1306_WHITE);
 
-  // Set kursor ke posisi tengah
   oled.setCursor(45, 16);
 
-  // Tampilkan teks
   oled.println("LoRa");
   oled.setCursor(27, 32);
   oled.println("Gateway");
 
-  // Gambar garis horizontal di bawah teks
   oled.drawLine(0, 55, 127, 55, SSD1306_WHITE);
 
   // Tampilkan perubahan pada layar
@@ -134,20 +132,34 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   LoRaReceiver();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected! Reconnecting...");
+    WiFi.disconnect();
+    WiFi.begin(WIFISSID, PASSWORD);
+    strcpy(status_koneksi, "Offline");
+  } else {
+    strcpy(status_koneksi, "Connected");
+  }
+
   antaresMQTT.checkMqttConnection();
 
-  displayMainScreen("LoRa Gateway", "Connected", WIFISSID, timeStr, time_received);
-  // if (!client.connected()) {
-  //   reconnect();
-  // } else {
-  //   strcpy(status_koneksi, "Online");
-  // }
+  displayMainScreen("LoRa Gateway", status_koneksi, WIFISSID, timeStr, time_received);
 
-  // if ( millis() - lastSend > 10000 ) { // Update and send only after 2 seconds
-  //   SendMessageToServer();
-  //   Serial.print("Send..");
-  //   lastSend = millis();
-  // }
+  if ( millis() - lastOn > rebootInterval ) { // Update and send only after 2 seconds
+    // Serial.println("ESP Restarting...");  // Cetak pesan sebelum restart
+    // Serial.flush();
+    
+    // oled.clearDisplay();
+    // oled.setTextSize(2);
+    // oled.setCursor(10,25);
+    // oled.print("ESP Restarting...");
+    // oled.display();
+    
+    // delay(2000);
+
+    // ESP.restart();
+    lastOn = millis();
+  }
 }
 
 void LoRaSetUp() {
@@ -233,11 +245,12 @@ void LoRaReceiver() {
     Serial.print("Data JSON: ");
     Serial.println(jsonData);
 
-    // Persiapan waktu saat data akan dikirim ke server
     if (getLocalTime(&timeinfo)) {
-      sprintf(time_send, "%04d-%02d-%02d %02d:%02d:%02d", 
+      int millisec = millis() % 1000;  // Ambil milidetik
+      sprintf(time_send, "%04d-%02d-%02d %02d:%02d:%02d.%03d", 
               timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, 
-              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, millisec);
+      
     }
     SendMessageToServer(rssi);
   }
@@ -313,30 +326,66 @@ void updateTime() {
 
 void displayMainScreen(String deviceType, String wifiStatus, String ssid, String ntpTime, String lastReceived) {
   oled.clearDisplay();
-  oled.setCursor(0, 0);
   oled.setTextSize(1);
-  oled.print("Device: ");
+  oled.setCursor(25, 0);
   oled.println(deviceType);
-  oled.print("WiFi: ");
+  oled.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  oled.setCursor(0, 12);
+  oled.print("WiFi  : ");
   oled.println(wifiStatus);
-  oled.print("SSID: ");
+
+  oled.setCursor(0, 22);
+  oled.print("SSID  : ");
   oled.println(ssid);
-  oled.print("Time: ");
-  oled.println(ntpTime);
-  oled.print("Last Data: ");
+
+  oled.setCursor(0, 32);
+  oled.print("Time  : ");
+  String formattedTime = ntpTime.substring(11, 19);
+  oled.println(formattedTime);
+
+  oled.setCursor(0, 42);
+  oled.println("Last Data: ");
+  oled.setCursor(0, 52);
   oled.println(lastReceived);
+
+  oled.drawLine(0, 63, 127, 63, SSD1306_WHITE);
   oled.display();
 }
 
 void displayJsonData(String jsonData, String protocol) {
+  
+  String devUI = extractValue(LoRaData, "devUI");
+  String timeAtDevice = extractValue(LoRaData, "time_at_device");
+  
+  String voltage = extractValue(LoRaData, "voltage");
+  String current = extractValue(LoRaData, "current");
+  String power = extractValue(LoRaData, "power");
+  String energy = extractValue(LoRaData, "energy");
+  String frequency = extractValue(LoRaData, "frequency");
+  String powerFactor = extractValue(LoRaData, "power_factor");
+  String formatedVoltage = voltage.substring(0,3);
+
   oled.clearDisplay();
-  oled.setCursor(0, 0);
+  oled.setCursor(25, 0);
   oled.setTextSize(1);
-  oled.println("Data Received:");
-  oled.println(jsonData);
-  oled.println("Sending to Server...");
-  oled.print("Protocol: ");
-  oled.println(protocol);
+  oled.println("Data Received");
+  oled.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  oled.setCursor(0, 12);
+  oled.println("DevUI: ");
+  oled.setCursor(0, 22);
+  oled.println(devUI);
+  oled.setCursor(0, 32);
+  oled.print("Time Device: ");
+  String formattedTime = timeAtDevice.substring(11, 19);
+  oled.println(formattedTime);
+  oled.setCursor(0, 42);
+  oled.print("RSSI: ");
+  oled.print(rssi); oled.print(", P: "); oled.print(power); oled.println(" W");
+  oled.setCursor(0, 52);
+  oled.print("V   : "); oled.print(formatedVoltage); oled.print("V");
+  oled.print(", C: "); oled.print(current); oled.println(" A");
+  oled.drawLine(0, 62, 127, 62, SSD1306_WHITE);
   oled.display();
-  delay(2000); // Tampilkan sementara
+  delay(5000); // Tampilkan sementara
 }
