@@ -55,6 +55,10 @@ const char* ntpServer = "pool.ntp.org"; // Server NTP
 const long  gmtOffset_sec = 7 * 3600;   // GMT+7 untuk WIB
 const int   daylightOffset_sec = 0;     // Tidak ada daylight saving di Indonesia
 char status_koneksi[8] = "Offline";
+unsigned long lastClockUpdate = 0;
+const unsigned long clockInterval = 1000; // 1 detik
+
+bool mainScreenDrawn = false;
 String LoRaData;
 struct tm timeinfo;
 char timeStr[20];
@@ -79,6 +83,7 @@ void LoRaReceiver();
 void updateTime();
 void displayMainScreen(String deviceType, String wifiStatus, String ssid, String ntpTime, String lastReceived);
 void displayJsonData(String jsonData, String protocol);
+void updateClockDisplay(String ntpTime);
 
 void setup() {
   // put your setup code here, to run once:
@@ -137,6 +142,7 @@ void loop() {
     WiFi.disconnect();
     WiFi.begin(WIFISSID, PASSWORD);
     strcpy(status_koneksi, "Offline");
+    mainScreenDrawn = false;
   } else {
     strcpy(status_koneksi, "Connected");
   }
@@ -144,6 +150,18 @@ void loop() {
   antaresMQTT.checkMqttConnection();
 
   displayMainScreen("LoRa Gateway", status_koneksi, WIFISSID, timeStr, time_received);
+
+  if (!mainScreenDrawn) {
+    displayMainScreen("LoRa Gateway", status_koneksi, WIFISSID, timeStr, time_received);
+    mainScreenDrawn = true;
+  }
+
+  // Realtime clock update per detik
+  if (millis() - lastClockUpdate >= clockInterval) {
+    updateTime();  // perbarui timeStr
+    updateClockDisplay(timeStr);
+    lastClockUpdate = millis();
+  }
 
   if ( millis() - lastOn > rebootInterval ) { // Update and send only after 2 seconds
     // Serial.println("ESP Restarting...");  // Cetak pesan sebelum restart
@@ -168,7 +186,7 @@ void LoRaSetUp() {
 
   //setup LoRa transceiver module
   LoRa.setPins(ss, rst, dio0);
-  while (!LoRa.begin(433E6)) {
+  while (!LoRa.begin(915E6)) {
     Serial.println(".");
     delay(500);
   }
@@ -388,4 +406,14 @@ void displayJsonData(String jsonData, String protocol) {
   oled.drawLine(0, 62, 127, 62, SSD1306_WHITE);
   oled.display();
   delay(5000); // Tampilkan sementara
+}
+
+void updateClockDisplay(String ntpTime) {
+  String formattedTime = ntpTime.substring(11, 19);
+  oled.setTextSize(1);
+  oled.setTextColor(WHITE);
+  oled.fillRect(48, 32, 80, 8, BLACK); // clear area jam sebelumnya
+  oled.setCursor(48, 32);              // posisi tetap agar tidak bergerak
+  oled.println(formattedTime);
+  oled.display();
 }
